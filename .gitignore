@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Data files (too large for git)
+data/*.fas
+data/*.fa
+data/*.fa.gz
+data/*.fas.gz
+data/*.vcf
+data/*.vcf.gz
+data/*.vcf.gz.tbi
+data/*.gff
+data/*.gff.gz
+
+# Output directories
+output/
+output_test/
+
+# iupacpal build artifacts (use the separate fork repo)
+tools/iupacpal/sdsl-lite/
+tools/iupacpal/libsdsl/
+tools/iupacpal/*.o
+tools/iupacpal/IUPACpal
+tools/bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Config test (keep config.yaml as template)
+config_test.yaml

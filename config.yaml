@@ -1,0 +1,54 @@
+# GenoPhenoIR Configuration
+# -------------------------
+
+paths:
+  # Input data
+  reference_fasta: "data/TAIR10_chr1.fas"
+  vcf_file: "data/1001genomes_chr1.vcf.gz"
+  phenotype_csv: "data/arapheno_phenotypes.csv"
+  gff3_file: "data/TAIR10_GFF3_genes.gff"
+
+  # Output directories
+  output_base: "output"
+  phase1_output: "output/phase1"
+  phase2_output: "output/phase2"
+  phase3_output: "output/phase3"
+  phase4_output: "output/phase4"
+
+params:
+  # IR detection
+  chromosomes: ["Chr1"]  # Start with Chr1 for PoC; expand to all for full run
+  min_stem_length: 6
+  max_stem_length: 100
+  min_spacer_length: 0
+  max_spacer_length: 50
+  max_mismatches: 1
+  min_ir_length: 14  # minimum total IR length (2*stem + spacer)
+
+  # Accession subsetting
+  max_accessions: 200  # limit for PoC speed
+
+  # IR variation
+  ir_disruption_threshold: 1  # min variants in IR to call it "disrupted"
+
+  # Phenotype traits of interest
+  target_traits:
+    - "flowering_time_LD"
+    - "rosette_leaf_number"
+    - "growth_rate"
+
+  # Phase 3 — clustering & modelling
+  umap_n_neighbors: 15
+  umap_min_dist: 0.1
+  umap_n_components: 2
+  hdbscan_min_cluster_size: 10
+  cv_folds: 5
+  shap_max_display: 20
+
+  # Phase 4 — image encoding
+  window_size_bp: 500000  # 500 kb genomic windows
+  image_height: 6  # feature rows per window
+  latent_dim: 32
+  autoencoder_epochs: 50
+  autoencoder_batch_size: 32
+  autoencoder_lr: 0.001
