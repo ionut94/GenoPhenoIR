@@ -23,14 +23,19 @@ The pipeline has 4 phases, implemented as independent Python modules:
 | 1 | `ir_profiler.py` | Scan reference genome for IRs; build per-accession fingerprint from VCF |
 | 2 | `phenotype_loader.py` | Load and merge AraPheno phenotype data with IR fingerprints |
 | 3 | `pattern_analysis.py` | UMAP/HDBSCAN clustering, RF/GBR prediction, SHAP explainability |
+| 3b | `validation.py` | **Matched-null + kinship correction** — is the signal IR-specific and beyond population structure? |
 | 4 | `image_encoder.py` | 2D image encoding, CNN autoencoder, latent space comparison |
 
 ## Data Sources
 
-- **Reference genome**: TAIR10 (The Arabidopsis Information Resource)
-- **Variants**: 1001 Genomes Project SNP matrix v3.1
-- **Phenotypes**: AraPheno database
+- **Reference genome**: TAIR10 Chr1 (Ensembl Plants release-57)
+- **Variants**: 1001 Genomes Project **imputed SNP matrix v3.1 (HDF5)** — full genome, all 1135 accessions, no missing genotypes (~332 MB)
+- **Phenotypes**: AraPheno study 12 — flowering time FT10/FT16 (~1160 accessions)
 - **Annotations**: TAIR10 GFF3 gene models
+
+> The genotype source is the imputed HDF5 SNP matrix, not the raw VCF. The full
+> v3.1 VCF is ~19 GB and impractical for local work; the HDF5 matrix is the
+> recommended path and is read directly by `ir_profiler.load_hdf5_variants`.
 
 ## Setup
 
@@ -54,12 +59,15 @@ If automatic downloads fail, manually obtain:
 
 | File | Source | Place as |
 |------|--------|----------|
-| TAIR10 Chr1 FASTA | [TAIR](https://www.arabidopsis.org/) or [Ensembl Plants](https://plants.ensembl.org/) | `data/TAIR10_chr1.fas` |
-| 1001 Genomes VCF | [1001genomes.org](https://1001genomes.org/data/GMI-MPI/releases/v3.1/) | `data/1001genomes_chr1.vcf.gz` (+ .tbi index) |
-| AraPheno phenotypes | [AraPheno](https://arapheno.1001genomes.org/) | `data/arapheno_phenotypes.csv` |
-| TAIR10 GFF3 | [TAIR](https://www.arabidopsis.org/) | `data/TAIR10_GFF3_genes.gff` |
+| TAIR10 Chr1 FASTA | `http://ftp.ensemblgenomes.org/pub/plants/release-57/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.chromosome.1.fa.gz` (http only — cert broken on https) | `data/TAIR10_chr1.fas` |
+| 1001 Genomes imputed SNP matrix | [`1001_SNP_MATRIX.tar.gz`](https://1001genomes.org/data/GMI-MPI/releases/v3.1/SNP_matrix_imputed_hdf5/1001_SNP_MATRIX.tar.gz) (~332 MB) | extract to `data/1001_SNP_MATRIX/imputed_snps_binary.hdf5` |
+| AraPheno phenotypes | [`study/12/values.csv`](https://arapheno.1001genomes.org/rest/study/12/values.csv) | `data/arapheno_flowering_time.csv` |
+| TAIR10 GFF3 | `http://ftp.ensemblgenomes.org/pub/plants/release-57/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.57.gff3.gz` | `data/TAIR10_GFF3_genes.gff` |
 
-**Note:** The pipeline generates synthetic data as a fallback when real data files are not available, so you can test the full pipeline without downloading anything.
+**Note:** If genotype/phenotype files are missing, the pipeline falls back to
+**synthetic data** so it can run end-to-end — but synthetic phenotypes are random
+and uncorrelated with the fingerprint, so a synthetic run demonstrates plumbing
+only, not biological signal.
 
 ### 3. (Optional) Install iupacpal for faster IR detection
 
@@ -83,6 +91,10 @@ python -m genophenoir.phenotype_loader
 
 # Phase 3: Pattern discovery
 python -m genophenoir.pattern_analysis
+
+# Phase 3b: Validation — does the IR signal survive matched-null + kinship correction?
+# (needs only the Phase 1 IR BED; builds its own fingerprints efficiently)
+python -m genophenoir.validation
 
 # Phase 4: Image encoding (requires PyTorch)
 python -m genophenoir.image_encoder

@@ -16,12 +16,19 @@ data/*.vcf.gz
 data/*.vcf.gz.tbi
 data/*.gff
 data/*.gff.gz
+data/*.csv
+data/*.hdf5
+data/*.h5
+data/*.tar.gz
+data/1001_SNP_MATRIX/
 
 # Output directories
 output/
 output_test/
 
-# iupacpal build artifacts (use the separate fork repo)
+# IUPACpal is its own repository — never track it from here.
+# (cloned locally for IR detection; the pipeline finds it via tools/bin symlink)
+iupacpal/
 tools/iupacpal/sdsl-lite/
 tools/iupacpal/libsdsl/
 tools/iupacpal/*.o

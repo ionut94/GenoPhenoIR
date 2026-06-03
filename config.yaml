@@ -4,8 +4,9 @@
 paths:
   # Input data
   reference_fasta: "data/TAIR10_chr1.fas"
-  vcf_file: "data/1001genomes_chr1.vcf.gz"
-  phenotype_csv: "data/arapheno_phenotypes.csv"
+  snp_matrix_hdf5: "data/1001_SNP_MATRIX/imputed_snps_binary.hdf5"  # preferred genotype source
+  vcf_file: "data/1001genomes_chr1.vcf.gz"  # legacy/alternative source
+  phenotype_csv: "data/arapheno_flowering_time.csv"
   gff3_file: "data/TAIR10_GFF3_genes.gff"
 
   # Output directories
@@ -14,6 +15,8 @@ paths:
   phase2_output: "output/phase2"
   phase3_output: "output/phase3"
   phase4_output: "output/phase4"
+  validation_output: "output/validation"
+  kinship_hdf5: "data/1001_SNP_MATRIX/kinship_ibs_mac5.hdf5"
 
 params:
   # IR detection
@@ -24,18 +27,20 @@ params:
   max_spacer_length: 50
   max_mismatches: 1
   min_ir_length: 14  # minimum total IR length (2*stem + spacer)
+  iupacpal_window_bp: 5000000  # tile size for IUPACpal (stays below its ~6.5 Mb segfault limit)
 
   # Accession subsetting
-  max_accessions: 200  # limit for PoC speed
+  # 0 = use all 1135 accessions (~1003 overlap with phenotypes, ~3 GB Chr1 block).
+  # Set to a positive integer to take the first N accessions for a faster/lighter run.
+  max_accessions: 0
 
   # IR variation
   ir_disruption_threshold: 1  # min variants in IR to call it "disrupted"
 
-  # Phenotype traits of interest
+  # Phenotype traits of interest (AraPheno study 12: flowering time)
   target_traits:
-    - "flowering_time_LD"
-    - "rosette_leaf_number"
-    - "growth_rate"
+    - "FT16"  # days to flowering at 16C
+    - "FT10"  # days to flowering at 10C
 
   # Phase 3 — clustering & modelling
   umap_n_neighbors: 15
@@ -44,6 +49,12 @@ params:
   hdbscan_min_cluster_size: 10
   cv_folds: 5
   shap_max_display: 20
+
+  # Phase 3b — validation (matched-null + kinship correction)
+  n_null_regions: 30        # number of matched random-region sets for the null
+  n_structure_pcs: 10       # kinship eigenvectors used as structure covariates
+  n_populations: 10         # kinship clusters for leave-population-out CV
+  validation_n_estimators: 100  # RF size (kept modest; runs many times)
 
   # Phase 4 — image encoding
   window_size_bp: 500000  # 500 kb genomic windows

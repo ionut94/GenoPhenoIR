@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 @dataclass
 class PathsConfig:
     reference_fasta: str
-    vcf_file: str
     phenotype_csv: str
     gff3_file: str
     output_base: str
@@ -18,6 +17,10 @@ class PathsConfig:
     phase2_output: str
     phase3_output: str
     phase4_output: str
+    snp_matrix_hdf5: str = ""  # preferred genotype source (1001G imputed HDF5)
+    vcf_file: str = ""  # legacy/alternative genotype source
+    validation_output: str = "output/validation"
+    kinship_hdf5: str = ""  # 1001G IBS kinship matrix (for structure correction)
 
 
 @dataclass
@@ -29,14 +32,11 @@ class ParamsConfig:
     max_spacer_length: int = 50
     max_mismatches: int = 1
     min_ir_length: int = 14
+    iupacpal_window_bp: int = 5_000_000
     max_accessions: int = 200
     ir_disruption_threshold: int = 1
     target_traits: list[str] = field(
-        default_factory=lambda: [
-            "flowering_time_LD",
-            "rosette_leaf_number",
-            "growth_rate",
-        ]
+        default_factory=lambda: ["FT16", "FT10"]
     )
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1
@@ -44,6 +44,10 @@ class ParamsConfig:
     hdbscan_min_cluster_size: int = 10
     cv_folds: int = 5
     shap_max_display: int = 20
+    n_null_regions: int = 30
+    n_structure_pcs: int = 10
+    n_populations: int = 10
+    validation_n_estimators: int = 100
     window_size_bp: int = 500_000
     image_height: int = 6
     latent_dim: int = 32

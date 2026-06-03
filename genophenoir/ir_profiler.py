@@ -169,8 +169,10 @@ def scan_ir_python(
 # ---------------------------------------------------------------------------
 
 _IUPACPAL_SEARCH_PATHS = [
-    "iupacpal",  # system PATH
-    "tools/bin/iupacpal",  # project-local build
+    "iupacpal",  # system PATH (lowercase)
+    "IUPACpal",  # system PATH (as built/installed by the IUPACpal Makefile)
+    "tools/bin/iupacpal",  # project-local symlink
+    "iupacpal/IUPACpal",  # local clone + build (git clone ... && make)
 ]
 
 
@@ -277,7 +279,9 @@ def scan_ir_iupacpal(
     return results
 
 
-def _parse_iupacpal_output(path: str, chrom: str) -> list[InvertedRepeat]:
+def _parse_iupacpal_output(
+    path: str, chrom: str, coord_offset: int = 0
+) -> list[InvertedRepeat]:
     """Parse IUPACpal human-readable output into InvertedRepeat objects.
 
     IUPACpal output format (groups of 3 lines per palindrome):
@@ -286,6 +290,12 @@ def _parse_iupacpal_output(path: str, chrom: str) -> list[InvertedRepeat]:
         22       tacgtacgt       14      ← right arm with start/end positions
 
     Positions are 1-based in the output.
+
+    Args:
+        path: IUPACpal output file.
+        chrom: Chromosome name for records.
+        coord_offset: 0-based offset added to every coordinate, so results from
+            a window/segment map back to the full chromosome.
     """
     results: list[InvertedRepeat] = []
 
@@ -333,9 +343,9 @@ def _parse_iupacpal_output(path: str, chrom: str) -> list[InvertedRepeat]:
             right_end = int(right_parts[2])  # 1-based
 
             stem_length = len(left_seq)
-            # Convert to 0-based coordinates
-            ir_start = left_start - 1  # 0-based inclusive
-            ir_end = right_start  # right_start is 1-based, so this is 0-based exclusive
+            # Convert to 0-based coordinates, shifted into chromosome space
+            ir_start = (left_start - 1) + coord_offset  # 0-based inclusive
+            ir_end = right_start + coord_offset  # right_start is 1-based -> 0-based exclusive
 
             # Spacer length = gap between left arm end and right arm start
             spacer_length = ir_end - (ir_start + stem_length) - stem_length
@@ -363,6 +373,121 @@ def _parse_iupacpal_output(path: str, chrom: str) -> list[InvertedRepeat]:
             continue
 
     logger.info("Parsed %d IRs from IUPACpal output", len(results))
+    return results
+
+
+def _iupacpal_on_segment(
+    seq: str,
+    chrom: str,
+    seq_offset: int,
+    iupacpal_bin: str,
+    min_len: int,
+    max_len: int,
+    max_gap: int,
+    mismatches: int,
+    timeout: int = 600,
+) -> list[InvertedRepeat]:
+    """Run IUPACpal on a single in-memory sequence segment.
+
+    Writes the segment to a temp FASTA, runs the binary, and parses the output
+    with ``seq_offset`` applied so coordinates are in full-chromosome space.
+    Returns [] (logging a warning) if the binary fails on this segment.
+    """
+    with tempfile.NamedTemporaryFile("w", suffix=".fasta", delete=False) as fa:
+        fa.write(f">{chrom}\n{seq}\n")
+        fa_path = fa.name
+    out_path = fa_path + ".out"
+    cmd = [
+        iupacpal_bin, "-f", fa_path, "-s", chrom,
+        "-m", str(min_len), "-M", str(max_len),
+        "-g", str(max_gap), "-x", str(mismatches), "-o", out_path,
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if res.returncode != 0:
+            logger.warning(
+                "IUPACpal failed on segment at offset %d (len %d): %s",
+                seq_offset, len(seq), (res.stderr or "").strip()[:200],
+            )
+            return []
+        return _parse_iupacpal_output(out_path, chrom, coord_offset=seq_offset)
+    except subprocess.TimeoutExpired:
+        logger.warning("IUPACpal timed out on segment at offset %d (len %d)", seq_offset, len(seq))
+        return []
+    finally:
+        Path(fa_path).unlink(missing_ok=True)
+        Path(out_path).unlink(missing_ok=True)
+
+
+def scan_ir_iupacpal_windowed(
+    sequence: str,
+    chrom: str,
+    iupacpal_bin: str,
+    min_palindrome_len: int = 14,
+    max_palindrome_len: int = 250,
+    max_gap: int = 50,
+    max_mismatches: int = 1,
+    window_bp: int = 5_000_000,
+) -> list[InvertedRepeat]:
+    """Scan a whole chromosome with IUPACpal, robust to its operational limits.
+
+    IUPACpal (as built here) has two practical limits on chromosome-scale input:
+      1. It segfaults above ~6.5 Mb of sequence, so segments are tiled into
+         windows of ``window_bp`` (default 5 Mb).
+      2. It treats ``N`` as an IUPAC wildcard matching every base, which makes
+         N-rich regions (assembly gaps, centromere) explode combinatorially and
+         hang. So the sequence is first split on runs of ``N``.
+
+    Windows overlap by ``max_palindrome_len`` so an IR straddling a tile
+    boundary is still fully contained in at least one window; duplicates from
+    the overlap are removed by (start, end).
+
+    Args:
+        sequence: Full chromosome sequence.
+        chrom: Chromosome name for records.
+        iupacpal_bin: Path/name of the IUPACpal binary.
+        min_palindrome_len / max_palindrome_len: Total IR length bounds.
+        max_gap: Maximum spacer length.
+        max_mismatches: Allowed mismatches between arms.
+        window_bp: Max window size kept below the segfault threshold.
+
+    Returns:
+        Sorted, de-duplicated list of InvertedRepeat objects in chromosome
+        coordinates.
+    """
+    seq = sequence.upper()
+    overlap = max_palindrome_len
+    step = max(1, window_bp - overlap)
+
+    results: list[InvertedRepeat] = []
+    seen: set[tuple[int, int]] = set()
+
+    # Split on runs of N (assembly gaps + wildcard explosions), keeping offsets.
+    for seg_match in re.finditer(r"[^N]+", seq):
+        seg = seg_match.group(0)
+        seg_start = seg_match.start()
+        if len(seg) < min_palindrome_len:
+            continue
+        # Tile segments larger than the window; small segments run once.
+        for w in range(0, len(seg), step):
+            sub = seg[w : w + window_bp]
+            if len(sub) < min_palindrome_len:
+                break
+            for ir in _iupacpal_on_segment(
+                sub, chrom, seg_start + w, iupacpal_bin,
+                min_palindrome_len, max_palindrome_len, max_gap, max_mismatches,
+            ):
+                key = (ir.start, ir.end)
+                if key not in seen:
+                    seen.add(key)
+                    results.append(ir)
+            if w + window_bp >= len(seg):
+                break
+
+    results.sort(key=lambda ir: (ir.start, ir.end))
+    for i, ir in enumerate(results):
+        ir.ir_id = f"{chrom}_IR_{i:06d}"
+    logger.info("IUPACpal (windowed) found %d inverted repeats on %s", len(results), chrom)
     return results
 
 
@@ -429,6 +554,80 @@ def load_vcf_variants(
     variants_df = pd.DataFrame(rows)
     logger.info("Loaded %d variants for %d accessions on %s", len(variants_df), len(samples), chrom)
     return variants_df, samples
+
+
+def load_hdf5_variants(
+    h5_path: Path,
+    chrom: str,
+    max_accessions: int = 200,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Load variants for one chromosome from the 1001G imputed SNP matrix.
+
+    The 1001 Genomes imputed SNP matrix (``imputed_snps_binary.hdf5``) stores:
+      - ``accessions``: 1D array of ecotype IDs (column order of ``snps``)
+      - ``positions``:  1D array of SNP positions, concatenated across all 5
+                        chromosomes (NOT chromosome-tagged on their own)
+      - ``positions.attrs['chr_regions']``: array of ``[start, stop]`` index
+                        pairs delimiting each chromosome within ``positions``
+      - ``snps``:       2D binary matrix, shape ``(n_positions, n_accessions)``,
+                        0 = reference allele, 1 = alternate allele
+
+    Returns the same ``(variants_df, accessions)`` contract as
+    :func:`load_vcf_variants` so it is a drop-in genotype source.
+
+    Args:
+        h5_path: Path to ``imputed_snps_binary.hdf5``.
+        chrom: Chromosome name, e.g. ``"Chr1"`` (the trailing digit selects
+            the chromosome index).
+        max_accessions: Max number of accessions (columns) to load.
+
+    Returns:
+        Tuple of (variants_df, accession_ids). variants_df has a ``pos`` column
+        plus one int8 column per accession (0 = ref, 1 = alt).
+    """
+    import h5py
+
+    # Chromosome name -> 0-based index (Chr1 -> 0, ... Chr5 -> 4)
+    digits = re.search(r"(\d+)$", chrom)
+    if not digits:
+        raise ValueError(f"Cannot parse chromosome number from '{chrom}'")
+    chrom_idx = int(digits.group(1)) - 1
+
+    with h5py.File(str(h5_path), "r") as f:
+        raw_acc = f["accessions"][:]
+        all_accessions = [
+            a.decode() if isinstance(a, bytes) else str(a) for a in raw_acc
+        ]
+
+        chr_regions = f["positions"].attrs["chr_regions"]
+        if chrom_idx >= len(chr_regions):
+            logger.warning("Chromosome index %d not in HDF5 chr_regions", chrom_idx)
+            return pd.DataFrame(), all_accessions
+        start, stop = (int(x) for x in chr_regions[chrom_idx])
+
+        positions = f["positions"][start:stop].astype(np.int64)
+
+        # Subset accession columns (first N) before reading genotypes to bound memory
+        n_acc = len(all_accessions)
+        col_idx = list(range(min(max_accessions, n_acc))) if max_accessions else list(range(n_acc))
+        accessions = [all_accessions[i] for i in col_idx]
+        if max_accessions and n_acc > max_accessions:
+            logger.info("Subsetting to %d of %d accessions", len(accessions), n_acc)
+
+        logger.info(
+            "Reading %d SNPs x %d accessions for %s from HDF5...",
+            stop - start, len(accessions), chrom,
+        )
+        # h5py supports slice on axis 0 + fancy index on axis 1
+        block = f["snps"][start:stop, col_idx].astype(np.int8)
+
+    variants_df = pd.DataFrame(block, columns=accessions)
+    variants_df.insert(0, "pos", positions)
+    logger.info(
+        "Loaded %d variants for %d accessions on %s",
+        len(variants_df), len(accessions), chrom,
+    )
+    return variants_df, accessions
 
 
 def build_ir_fingerprint(
@@ -553,36 +752,39 @@ def run_phase1(cfg: Config) -> tuple[list[InvertedRepeat], pd.DataFrame]:
             fasta_path = resolve_path(cfg, cfg.paths.reference_fasta)
             logger.info("Scanning %s for inverted repeats...", fasta_path)
 
-            # Try IUPACpal first (faster, more accurate); fall back to Python
+            # Locate the chromosome sequence (used by either scanner)
+            seq_record = None
+            for rec in SeqIO.parse(fasta_path, "fasta"):
+                rec_name = rec.id.split()[0]
+                if rec_name == chrom or rec_name == chrom.replace("Chr", "") or f"Chr{rec_name}" == chrom:
+                    seq_record = rec
+                    break
+            if seq_record is None:
+                logger.error("Chromosome %s not found in %s", chrom, fasta_path)
+                continue
+            sequence = str(seq_record.seq)
+
+            min_pal_len = cfg.params.min_ir_length
+            max_pal_len = 2 * cfg.params.max_stem_length + cfg.params.max_spacer_length
+
+            # Prefer IUPACpal (exact, fast); windowed to survive its size/N limits.
             iupacpal_bin = _find_iupacpal()
             if iupacpal_bin is not None:
-                logger.info("Using IUPACpal for IR detection")
-                min_pal_len = cfg.params.min_ir_length
-                max_pal_len = 2 * cfg.params.max_stem_length + cfg.params.max_spacer_length
-                ir_list = scan_ir_iupacpal(
-                    fasta_path,
+                logger.info("Using IUPACpal (%s) for IR detection", iupacpal_bin)
+                ir_list = scan_ir_iupacpal_windowed(
+                    sequence,
                     chrom,
+                    iupacpal_bin,
                     min_palindrome_len=min_pal_len,
                     max_palindrome_len=max_pal_len,
                     max_gap=cfg.params.max_spacer_length,
                     max_mismatches=cfg.params.max_mismatches,
+                    window_bp=cfg.params.iupacpal_window_bp,
                 )
             else:
-                # Python scanner fallback
-                logger.info("IUPACpal not found; using Python scanner")
-                seq_record = None
-                for rec in SeqIO.parse(fasta_path, "fasta"):
-                    rec_name = rec.id.split()[0]
-                    if rec_name == chrom or rec_name == chrom.replace("Chr", "") or f"Chr{rec_name}" == chrom:
-                        seq_record = rec
-                        break
-
-                if seq_record is None:
-                    logger.error("Chromosome %s not found in %s", chrom, fasta_path)
-                    continue
-
+                logger.info("IUPACpal not found; using pure-Python scanner")
                 ir_list = scan_ir_python(
-                    str(seq_record.seq),
+                    sequence,
                     chrom,
                     min_stem=cfg.params.min_stem_length,
                     max_stem=cfg.params.max_stem_length,
@@ -601,11 +803,22 @@ def run_phase1(cfg: Config) -> tuple[list[InvertedRepeat], pd.DataFrame]:
             logger.info("Loading cached fingerprint from %s", fp_path)
             fp_df = pd.read_parquet(fp_path)
         else:
-            vcf_path = resolve_path(cfg, cfg.paths.vcf_file)
-            if vcf_path.exists():
+            h5_path = resolve_path(cfg, cfg.paths.snp_matrix_hdf5) if cfg.paths.snp_matrix_hdf5 else None
+            vcf_path = resolve_path(cfg, cfg.paths.vcf_file) if cfg.paths.vcf_file else None
+
+            variants_df, accessions = None, None
+            if h5_path and h5_path.exists():
+                logger.info("Using 1001G imputed SNP matrix (HDF5): %s", h5_path)
+                variants_df, accessions = load_hdf5_variants(
+                    h5_path, chrom, max_accessions=cfg.params.max_accessions
+                )
+            elif vcf_path and vcf_path.exists():
+                logger.info("Using VCF genotype source: %s", vcf_path)
                 variants_df, accessions = load_vcf_variants(
                     vcf_path, chrom, max_accessions=cfg.params.max_accessions
                 )
+
+            if variants_df is not None and not variants_df.empty:
                 fp_df = build_ir_fingerprint(
                     ir_list, variants_df, accessions,
                     disruption_threshold=cfg.params.ir_disruption_threshold,
@@ -613,7 +826,10 @@ def run_phase1(cfg: Config) -> tuple[list[InvertedRepeat], pd.DataFrame]:
                 fp_df.to_parquet(fp_path)
                 logger.info("Saved fingerprint to %s", fp_path)
             else:
-                logger.warning("VCF file not found at %s; generating synthetic fingerprint", vcf_path)
+                logger.warning(
+                    "No genotype source found (HDF5: %s, VCF: %s); generating synthetic fingerprint",
+                    h5_path, vcf_path,
+                )
                 fp_df = _generate_synthetic_fingerprint(ir_list, cfg.params.max_accessions)
                 fp_df.to_parquet(fp_path)
 

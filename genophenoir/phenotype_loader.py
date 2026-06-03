@@ -88,9 +88,12 @@ def load_phenotype_data(
     trait_cols = [c for c in keep_cols if c != "accession_id"]
     df = df.dropna(subset=trait_cols, how="all")
 
-    # Set index
-    df = df.set_index("accession_id")
-    df = df[~df.index.duplicated(keep="first")]
+    # Collapse replicates: average trait values per accession
+    # (AraPheno study files carry a replicate_id and multiple rows per accession)
+    n_before = len(df)
+    df = df.groupby("accession_id", as_index=True)[trait_cols].mean()
+    if len(df) < n_before:
+        logger.info("Averaged %d rows into %d unique accessions", n_before, len(df))
 
     logger.info(
         "Phenotype data after cleaning: %d accessions, traits: %s",
