@@ -43,58 +43,13 @@ from genophenoir.phenotype_loader import load_phenotype_data
 from genophenoir.validation import (
     _load_genotypes, assign_populations, cv_r2, load_kinship, structure_components,
 )
+from genophenoir.annotation import build_context_masks, assign_context, CONTEXTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("exp03")
 sns.set_theme(style="whitegrid", context="notebook")
 
 FEATURE = "stem_snp"
-PROMOTER_BP = 1000
-CONTEXTS = ["promoter", "five_prime_UTR", "three_prime_UTR", "exon", "intron", "intergenic"]
-
-
-def build_context_masks(gff_path: Path, chrom: str, chrom_len: int) -> dict[str, np.ndarray]:
-    """Boolean coverage masks over the chromosome for each regulatory context."""
-    gff_chrom = chrom.replace("Chr", "")  # GFF uses '1'
-    masks = {c: np.zeros(chrom_len, dtype=bool) for c in
-             ["promoter", "five_prime_UTR", "three_prime_UTR", "exon", "gene_body"]}
-    with open(gff_path) as f:
-        for line in f:
-            if line.startswith("#"):
-                continue
-            p = line.rstrip("\n").split("\t")
-            if len(p) < 9 or p[0] != gff_chrom:
-                continue
-            ftype, start, end, strand = p[2], int(p[3]) - 1, int(p[4]), p[6]
-            start = max(0, start); end = min(chrom_len, end)
-            if ftype == "gene":
-                masks["gene_body"][start:end] = True
-                if strand == "+":
-                    masks["promoter"][max(0, start - PROMOTER_BP):start] = True
-                else:
-                    masks["promoter"][end:min(chrom_len, end + PROMOTER_BP)] = True
-            elif ftype == "five_prime_UTR":
-                masks["five_prime_UTR"][start:end] = True
-            elif ftype == "three_prime_UTR":
-                masks["three_prime_UTR"][start:end] = True
-            elif ftype in ("exon", "CDS"):
-                masks["exon"][start:end] = True
-    return masks
-
-
-def assign_context(midpoint: int, masks: dict[str, np.ndarray]) -> str:
-    """Assign one context to a point by biological priority."""
-    if masks["promoter"][midpoint]:
-        return "promoter"
-    if masks["five_prime_UTR"][midpoint]:
-        return "five_prime_UTR"
-    if masks["three_prime_UTR"][midpoint]:
-        return "three_prime_UTR"
-    if masks["exon"][midpoint]:
-        return "exon"
-    if masks["gene_body"][midpoint]:
-        return "intron"
-    return "intergenic"
 
 
 def main() -> None:

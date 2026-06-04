@@ -1,0 +1,43 @@
+{
+  "n_irs": 6642,
+  "stem_poly_rate_mean": 0.11831608342704332,
+  "loop_poly_rate_mean": 0.13142303489618043,
+  "wilcoxon_p_stem_vs_loop": 0.01374944556355006,
+  "stem_lower_than_loop": true,
+  "observed_stem_poly_rate": 0.11831608342704332,
+  "null_stem_poly_mean": 0.08530787681389156,
+  "null_stem_poly_std": 0.0009017735088925142,
+  "p_stems_more_conserved_than_random": 1.0,
+  "by_context": {
+    "promoter": {
+      "n": 1839,
+      "stem_poly_rate": 0.1273015018783817,
+      "stem_mean_alt_freq": 0.04448980649219958
+    },
+    "five_prime_UTR": {
+      "n": 111,
+      "stem_poly_rate": 0.11995372196610588,
+      "stem_mean_alt_freq": 0.03065106653212379
+    },
+    "three_prime_UTR": {
+      "n": 122,
+      "stem_poly_rate": 0.11031719281096859,
+      "stem_mean_alt_freq": 0.054195700726898825
+    },
+    "exon": {
+      "n": 163,
+      "stem_poly_rate": 0.072878001307514,
+      "stem_mean_alt_freq": 0.053829801676751755
+    },
+    "intron": {
+      "n": 767,
+      "stem_poly_rate": 0.12928147710511745,
+      "stem_mean_alt_freq": 0.056312754878997874
+    },
+    "intergenic": {
+      "n": 3640,
+      "stem_poly_rate": 0.1137187902071846,
+      "stem_mean_alt_freq": 0.04185151346894707
+    }
+  }
+}
