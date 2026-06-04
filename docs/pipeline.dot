@@ -1,0 +1,165 @@
+// GenoPhenoIR pipeline — visual overview
+// Render:  dot -Tpng docs/pipeline.dot -o docs/pipeline.png
+//          dot -Tsvg docs/pipeline.dot -o docs/pipeline.svg
+digraph GenoPhenoIR {
+    rankdir=LR;
+    fontname="Helvetica";
+    labelloc="t";
+    fontsize=20;
+    label="GenoPhenoIR — Inverted-Repeat Profiling & Phenotype Validation Pipeline";
+    compound=true;
+    nodesep=0.35;
+    ranksep=0.9;
+
+    // ---- default styles ----
+    node [fontname="Helvetica", fontsize=11, style="filled", penwidth=1.2];
+    edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    // node-class styles applied per node:
+    //   data file  -> cylinder, light blue
+    //   process    -> box,      white/phase-tinted
+    //   output     -> note,     light yellow
+    //   external   -> box3d,    light grey
+
+    // =====================================================================
+    // INPUTS
+    // =====================================================================
+    subgraph cluster_inputs {
+        label="Data sources";
+        style="filled,rounded"; color="#eef3f8"; fontsize=14;
+        node [shape=cylinder, fillcolor="#cfe2f3"];
+        ref     [label="TAIR10 Chr1\nreference FASTA"];
+        hdf5    [label="1001G imputed\nSNP matrix (HDF5)\n10.7M SNPs x 1135"];
+        kin     [label="1001G IBS\nkinship matrix"];
+        pheno   [label="AraPheno study 12\nFT10 / FT16"];
+        gff     [label="TAIR10 GFF3\ngene models"];
+        iupac   [label="IUPACpal binary\n(exact IR detector)", shape=box3d, fillcolor="#e0e0e0"];
+    }
+
+    // =====================================================================
+    // PHASE 1 — IR profiling  (genophenoir/ir_profiler.py)
+    // =====================================================================
+    subgraph cluster_p1 {
+        label="Phase 1 — IR profiling  (ir_profiler.py)";
+        style="filled,rounded"; color="#e8f5e9"; fontsize=14;
+        node [shape=box, fillcolor="#ffffff"];
+        p1_scan [label="scan_ir_iupacpal_windowed()\nsplit on N-runs + tile <5 Mb"];
+        p1_bed  [label="Chr1_ir_regions.bed\n6642 IRs (stems >=14 bp)", shape=note, fillcolor="#fff7d6"];
+        p1_geno [label="load_hdf5_variants()\nper-accession 0/1 genotypes"];
+        p1_fp   [label="build_ir_fingerprint()\nIR disrupted if SNP present"];
+        p1_out  [label="combined_fingerprint.parquet\naccessions x IRs", shape=note, fillcolor="#fff7d6"];
+    }
+
+    // =====================================================================
+    // PHASE 2 — Phenotype integration  (phenotype_loader.py)
+    // =====================================================================
+    subgraph cluster_p2 {
+        label="Phase 2 — Phenotype integration  (phenotype_loader.py)";
+        style="filled,rounded"; color="#fff3e0"; fontsize=14;
+        node [shape=box, fillcolor="#ffffff"];
+        p2_load  [label="load_phenotype_data()\nreplicate averaging"];
+        p2_merge [label="merge_fingerprint_phenotype()\nmatch on accession ID"];
+        p2_out   [label="merged_data.parquet\nIR features + traits", shape=note, fillcolor="#fff7d6"];
+    }
+
+    // =====================================================================
+    // PHASE 3 — Pattern discovery  (pattern_analysis.py)
+    // =====================================================================
+    subgraph cluster_p3 {
+        label="Phase 3 — Pattern discovery  (pattern_analysis.py)";
+        style="filled,rounded"; color="#ede7f6"; fontsize=14;
+        node [shape=box, fillcolor="#ffffff"];
+        p3_clu  [label="UMAP + HDBSCAN\nclustering"];
+        p3_pred [label="RandomForest / GBR\nk-fold CV + shuffled baseline"];
+        p3_shap [label="SHAP\n+ GFF3 gene overlap"];
+        p3_out  [label="clusters / predictions /\nSHAP  (png + csv)", shape=note, fillcolor="#fff7d6"];
+    }
+
+    // =====================================================================
+    // PHASE 3b — Validation  (validation.py)   *** the decisive test ***
+    // =====================================================================
+    subgraph cluster_p3b {
+        label="Phase 3b — Validation: matched-null + kinship correction  (validation.py)";
+        style="filled,rounded"; color="#fde0e0"; fontsize=14;
+        node [shape=box, fillcolor="#ffffff"];
+        v_struct [label="structure_components()\nkinship PCoA -> populations"];
+        v_null   [label="generate_matched_regions()\nrandom regions, matched size"];
+        v_cv     [label="cv_r2()\nleave-population-out CV"];
+        v_out    [label="validation_summary.csv\n+ null-distribution plots", shape=note, fillcolor="#fff7d6"];
+    }
+
+    // =====================================================================
+    // EXPERIMENT 01 — Mechanistic IR features  (ir_features.py + experiments/)
+    // =====================================================================
+    subgraph cluster_exp {
+        label="Experiment 01 — Mechanistic IR features  (ir_features.py + experiments/)";
+        style="filled,rounded"; color="#fce4ec"; fontsize=14;
+        node [shape=box, fillcolor="#ffffff"];
+        e_feat [label="build_feature_fingerprints()\nany_snp / stem_snp / DDG"];
+        e_run  [label="mechanistic_experiment.py\nvs matched null, LPO CV"];
+        e_out  [label="experiment-01 report\n+ figures   (VERDICT: no\nIR-specific signal)", shape=note, fillcolor="#ffd9d9"];
+    }
+
+    // =====================================================================
+    // PHASE 4 — Visual encoding  (image_encoder.py)
+    // =====================================================================
+    subgraph cluster_p4 {
+        label="Phase 4 — Visual encoding (experimental)  (image_encoder.py)";
+        style="filled,rounded"; color="#e0f7fa"; fontsize=14;
+        node [shape=box, fillcolor="#ffffff"];
+        p4_img [label="create_accession_images()\n2D genomic-window images"];
+        p4_ae  [label="CNN autoencoder\n(PyTorch)"];
+        p4_out [label="latent vectors + UMAP /\ntabular-vs-image compare", shape=note, fillcolor="#fff7d6"];
+    }
+
+    // =====================================================================
+    // EDGES
+    // =====================================================================
+    // Phase 1
+    iupac -> p1_scan [style=dashed, label="used by"];
+    ref   -> p1_scan;
+    p1_scan -> p1_bed;
+    hdf5  -> p1_geno;
+    p1_bed  -> p1_fp;
+    p1_geno -> p1_fp;
+    p1_fp   -> p1_out;
+
+    // Phase 2
+    p1_out -> p2_merge;
+    pheno  -> p2_load -> p2_merge -> p2_out;
+
+    // Phase 3
+    p2_out -> p3_clu;
+    p2_out -> p3_pred;
+    p2_out -> p3_shap;
+    gff    -> p3_shap [style=dashed];
+    p3_clu -> p3_out;
+    p3_pred -> p3_out;
+    p3_shap -> p3_out;
+
+    // Phase 3b (validation) — needs IR coords + genotypes + phenotypes + kinship
+    p1_bed -> v_null      [ltail=cluster_p1];
+    hdf5   -> v_null      [label="genotypes"];
+    kin    -> v_struct;
+    pheno  -> v_cv        [style=dashed, label="traits"];
+    v_struct -> v_cv;
+    v_null   -> v_cv;
+    v_cv     -> v_out;
+
+    // Experiment 01 — mechanistic features reuse IR coords + ref + genotypes + validation infra
+    p1_bed -> e_feat;
+    ref    -> e_feat [style=dashed, label="stem pairing"];
+    hdf5   -> e_feat;
+    v_struct -> e_run [style=dashed, label="LPO CV + null"];
+    e_feat -> e_run -> e_out;
+
+    // Phase 4
+    p1_bed  -> p4_img;
+    p1_out  -> p4_img;
+    p2_out  -> p4_img [style=dashed];
+    p4_img -> p4_ae -> p4_out;
+    p3_out -> p4_out [style=dashed, label="compare"];
+
+    // keep phase clusters roughly ordered
+    p1_out -> p2_load [style=invis];
+}
